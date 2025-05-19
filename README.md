@@ -16,6 +16,12 @@ to use the library, import in  in your cargo file:
 rust_nn_pc = { git = "https://github.com/Ukcoop/rust_nn_pc.git" }
 ```
 
+to update to the latest version of the library, run:
+
+```bash
+cargo update -p rust_nn_pc
+```
+
 # test it out
 
 you can see how good it performs on your mechine:
