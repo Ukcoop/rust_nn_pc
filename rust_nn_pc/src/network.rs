@@ -1,3 +1,4 @@
+use crate::attention::Attention;
 use crate::pc_layer::PCLayer;
 use tch::{Device, Kind, Result, Tensor, nn, nn::OptimizerConfig};
 
@@ -6,6 +7,7 @@ pub struct NeuralNetwork {
     vs: nn::VarStore,
     linears: Vec<nn::Linear>,
     pc_layers: Vec<PCLayer>, // one per hidden layer
+    attns: Vec<Attention>,   // one per linear except last
     opt: nn::Optimizer,
     // PC hyperparameters
     t_steps: usize,
@@ -41,6 +43,14 @@ impl NeuralNetwork {
             pc_layers.push(PCLayer::new());
         }
 
+        // Attention modules after each linear except the last
+        let mut attns = Vec::new();
+        for i in 0..(linears.len().saturating_sub(1)) {
+            let out_dim = linears[i].ws.size()[0];
+            let a = Attention::new(&(root / format!("attn_{i}")), out_dim, 4);
+            attns.push(a);
+        }
+
         let opt = nn::Adam::default().build(&vs, 1e-3)?;
 
         Ok(Self {
@@ -48,6 +58,7 @@ impl NeuralNetwork {
             vs,
             linears,
             pc_layers,
+            attns,
             opt,
             t_steps: 20,
             lr_x: 1e-2,
@@ -74,6 +85,7 @@ impl NeuralNetwork {
         for i in 0..self.linears.len() {
             x = x.apply(&self.linears[i]);
             if i + 1 != self.linears.len() {
+                x = self.attns[i].forward(&x);
                 x = x.relu();
             }
         }
@@ -82,10 +94,17 @@ impl NeuralNetwork {
 
     fn forward_pc_train_internal(&mut self, input: &Tensor) -> Tensor {
         let mut x = input.apply(&self.linears[0]);
+        if self.linears.len() > 1 {
+            x = self.attns[0].forward(&x);
+        }
         // hidden layers with PC
         for i in 0..self.pc_layers.len() {
             x = self.pc_layers[i].forward_train(&x).relu();
             x = x.apply(&self.linears[i + 1]);
+            // apply attention after linear if not last linear
+            if i + 1 < self.linears.len() - 1 {
+                x = self.attns[i + 1].forward(&x);
+            }
         }
         // x now holds the pre-activation logits at output (no pc layer)
         x
